@@ -1,0 +1,6 @@
+fileignoreconfig:
+- filename: backend/src/finance_tracker.py
+  checksum: 6a4b026a88a1c7180ba6a49d81a061229f38323f2a1a42d58beaa1cf3dbd361f
+- filename: backend/uv.lock
+  checksum: 823ca202d347a4efa9fcdcff94b1033660789b0fbdc277be967dd55a97b47f1a
+version: "1.0"
