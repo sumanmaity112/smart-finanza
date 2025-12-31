@@ -9,7 +9,7 @@ provision:
 
 # Run the MCP server
 run:
-	. .env && uv run python src/finance_tracker.py
+	. .env && uv run python src/main.py
 
 # Run tests with coverage
 test:

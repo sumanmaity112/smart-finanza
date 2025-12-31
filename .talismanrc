@@ -1,6 +1,12 @@
 fileignoreconfig:
+- filename: backend/src/categorizer.py
+  checksum: e20cbb89da578254640a15f55aace57d940e0d5d89cf9206601726c9e65e5498
 - filename: backend/src/finance_tracker.py
   checksum: 6a4b026a88a1c7180ba6a49d81a061229f38323f2a1a42d58beaa1cf3dbd361f
+- filename: backend/src/main.py
+  checksum: dec073d279a3e52102b5e1277a19c1448ec74888908155e88cc1ebb8b982facc
+- filename: backend/src/tracker.py
+  checksum: b33b4732f2b4f974ae3d697290cf2a9dbd96daeea1284e11a283321c9e224b88
 - filename: backend/uv.lock
-  checksum: 823ca202d347a4efa9fcdcff94b1033660789b0fbdc277be967dd55a97b47f1a
+  checksum: c1c5d9cee826f4c19aac1dfcd184cac8485075383a6bf4929fbb9929a70a49bd
 version: "1.0"
