@@ -3,6 +3,7 @@ import hashlib
 import os
 from datetime import datetime
 from typing import List, Dict
+from constants import TxnType, PaymentMethod
 
 DB_NAME = os.getenv("DB_NAME", "finance_vault.db")
 
@@ -23,30 +24,31 @@ class DatabaseEngine:
 
         # 1. Track Processed Files (Avoid Duplicates)
         c.execute("""CREATE TABLE IF NOT EXISTS processed_files (
-                        file_hash TEXT PRIMARY KEY, 
-                        filename TEXT, 
-                        processed_date TEXT
-                    )""")
+                                                                    file_hash TEXT PRIMARY KEY,
+                                                                    filename TEXT,
+                                                                    processed_date TEXT
+                     )""")
 
         # 2. Transactions Table
         c.execute("""CREATE TABLE IF NOT EXISTS transactions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        transaction_id TEXT,
-                        date TEXT,
-                        merchant TEXT,
-                        amount REAL,
-                        payment_method TEXT,
-                        category TEXT DEFAULT 'Uncategorized',
-                        notes TEXT,
-                        source_file TEXT,
-                        UNIQUE(transaction_id, source_file)
-                    )""")
+                                                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                                                 transaction_id TEXT,
+                                                                 date TEXT,
+                                                                 merchant TEXT,
+                                                                 amount REAL,
+                                                                 txn_type TEXT,       -- Stores 'DEBIT' or 'CREDIT'
+                                                                 payment_method TEXT, -- Stores 'Credit Card', 'UPI', etc.
+                                                                 category TEXT DEFAULT 'Uncategorized',
+                                                                 notes TEXT,
+                                                                 source_file TEXT,
+                                                                 UNIQUE(transaction_id, source_file)
+            )""")
 
         # 3. Category Rules (Persistent Knowledge Base)
         c.execute("""CREATE TABLE IF NOT EXISTS category_map (
-                        keyword TEXT PRIMARY KEY, 
-                        category TEXT
-                    )""")
+                                                                 keyword TEXT PRIMARY KEY,
+                                                                 category TEXT
+                     )""")
 
         conn.commit()
         conn.close()
@@ -68,14 +70,39 @@ class DatabaseEngine:
         conn.commit()
         conn.close()
 
-    def save_transactions(self, transactions: List[Dict], filename: str):
+    def save_transactions(
+        self, transactions: List[Dict], filename: str, default_method: PaymentMethod
+    ):
         conn = self.get_connection()
         c = conn.cursor()
         count = 0
+
         for t in transactions:
-            print(f"Debug Transaction: {t}")
             # Basic validation
             if not t.get("merchant") or not t.get("amount"):
+                continue
+
+            # 1. ENUM LOGIC: Resolve Payment Method
+            # The LLM gives us a string; we try to match it to an Enum, or fallback to file default
+            raw_method = t.get("payment_method")
+            p_method = default_method
+
+            if raw_method and raw_method != "Unknown":
+                for pm in PaymentMethod:
+                    if pm.value.lower() == raw_method.lower():
+                        p_method = pm
+                        break
+
+            # 2. ENUM LOGIC: Resolve Transaction Type
+            raw_type = t.get("txn_type", "DEBIT")
+            txn_type = TxnType.DEBIT  # Default
+            if str(raw_type).upper() == "CREDIT":
+                txn_type = TxnType.CREDIT
+
+            # 3. Clean Amount
+            try:
+                amt = abs(float(str(t["amount"]).replace(",", "")))
+            except Exception:
                 continue
 
             try:
@@ -84,19 +111,20 @@ class DatabaseEngine:
                 tx_id = t.get("transaction_id")
                 if not tx_id:
                     # Create a deterministic hash of the transaction content itself
-                    raw_str = f"{t.get('date')}{t.get('merchant')}{t.get('amount')}"
+                    raw_str = f"{t.get('date')}{t.get('merchant')}{amt}"
                     tx_id = "GEN-" + hashlib.md5(raw_str.encode()).hexdigest()[:8]
 
                 c.execute(
                     """INSERT OR IGNORE INTO transactions 
-                             (transaction_id, date, merchant, amount, payment_method, notes, source_file)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                             (transaction_id, date, merchant, amount, txn_type, payment_method, notes, source_file)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         tx_id,
                         t.get("date"),
                         t.get("merchant"),
-                        t.get("amount"),
-                        t.get("payment_method", "Unknown"),
+                        amt,
+                        txn_type.value,  # Save Enum string value
+                        p_method.value,  # Save Enum string value
                         t.get("notes", ""),
                         filename,
                     ),

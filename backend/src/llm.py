@@ -1,13 +1,13 @@
 import os
 import ollama
 import json
+import re
 from typing import List, Dict
 
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5")
 CHUNK_SIZE_LINES = int(os.getenv("CHUNK_SIZE_LINES", "20"))
 
 
-# --- LLM ENGINE ---
 class LLMExtractor:
     def __init__(self, model=MODEL_NAME):
         self.model = model
@@ -23,45 +23,87 @@ class LLMExtractor:
             text = text[:-3]
         return text.strip()
 
+    def identify_instrument(self, text_chunk: str) -> str:
+        prompt = f"""
+        Analyze the header text of this financial document.
+        Identify the payment instrument or account type.
+        
+        Return ONLY one of the following exact strings:
+        - "Credit Card"
+        - "UPI"
+        - "Bank Transfer"
+        - "Debit Card"
+        - "Unknown"
+
+        Text:
+        {text_chunk[:2000]} 
+        """
+
+        try:
+            response = ollama.chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0},
+            )
+            result = (
+                response["message"]["content"].strip().replace('"', "").replace("'", "")
+            )
+            valid_types = ["Credit Card", "UPI", "Bank Transfer", "Debit Card"]
+            for v in valid_types:
+                if v.lower() in result.lower():
+                    return v
+            return "Unknown"
+        except Exception:
+            return "Unknown"
+
     def extract_chunk(self, text_chunk: str, is_csv: bool = False) -> List[Dict]:
-        context_hint = "raw CSV rows" if is_csv else "unstructured text from a PDF bank statement"
+        context_hint = (
+            "raw CSV rows" if is_csv else "unstructured text from a PDF bank statement"
+        )
 
         prompt = f"""
-        You are a financial data parser. Your job is to convert raw text into a structured JSON list.
+        You are a strict financial data parser. Extract transactions from the {context_hint} below.
         
-        ### INPUT CONTEXT
-        The text below contains transaction rows.
-        - It may look like a table with columns: [Date] [Description/Details] [Amount/Debit/Credit] [Ref No].
-        - Ignore header lines like "Opening Balance", "Page 1 of 5", "Total Due".
-        - Ignore footer lines or legal disclaimers.
+        ### CRITICAL RULES (Follow these or fail)
+        1. **Truthfulness**: Only extract data explicitly present in the Input Text. DO NOT invent transactions. 
+           - If the input text is just headers, footers, or empty, return an empty list: [].
+           
+        2. **Date**: Input is likely DD/MM/YYYY. Convert strictly to YYYY-MM-DD.
+        
+        3. **Merchant**: Extract the CLEAN name.
+           - Remove cities (e.g. "MUMBAI", "HYD"), "POS", and "Value Date".
+           - **EXCEPTION**: Do NOT remove "Payment Received" or "Fuel Surcharge Waiver". Keep them as the merchant name.
+           - Example: "PAYMENT RECEIVED BBPS" -> "Payment Received BBPS"
+           - Example: "FUEL SURCHARGE WAIVER" -> "Fuel Surcharge Waiver"
+           
+        4. **Amount**: ALWAYS Positive.
+        
+        5. **Type**: "DEBIT" (Spending) or "CREDIT" (Refund/Income/Waiver).
+        
+        6. **Transaction ID**: Extract the unique identifier.
+           - Look for labels like "Ref No", "Txn ID", "Reference".
+           - **IMPORTANT**: Capture long numeric strings (e.g., "19999999...") often found in waivers/payments.
 
-        ### EXTRACTION RULES
-        1. **Date**: Convert to YYYY-MM-DD.
-        2. **Merchant**: Extract the CLEAN name (e.g., remove "POS", "HYD", numbers).
-           - "UBER *TRIP 1234" -> "Uber"
-           - "PAYMENT RECEIVED - THANK YOU" -> "Payment Received"
-        3. **Amount**: 
-           - **Negative (-)** for DEBITS (Spending/Purchases).
-           - **Positive (+)** for CREDITS (Refunds/Income/Deposits).
-           - If text says "Dr" or column is "Debit", make it negative.
-        4. **Payment Method**: Infer if possible (UPI, IMPS, NEFT, ACH, CASH, CARD). Default: "Unknown".
-        5. **Transaction ID**: Look for alphanumeric codes (e.g., "TXN882", "Ref: 9928").
-
-        ### INPUT DATA
+        7. **Notes**: Capture any remaining details (Category, Narration, Remarks).
+           - If the row has a "Category" column (e.g., "Professional Service"), put it here.
+           - If the row has narration (e.g., "IMPS/1234/Remark"), put it here.
+           - **If there is NO extra text, return an empty string ""**.
+           
+        8. **Structure**: Return a JSON List.
+        
+        ### INPUT TEXT
         {text_chunk}
 
-        ### OUTPUT FORMAT
-        Return a valid JSON List of objects. Do not return a single object.
-        
-        Example Output:
+        ### EXAMPLE OUTPUT (Use this format, but NOT this data)
         [
             {{
-                "date": "2025-01-15",
-                "merchant": "Amazon",
-                "amount": -450.00,
-                "payment_method": "Credit Card",
-                "transaction_id": "TXN998877",
-                "notes": "Purchase of electronics"
+                "date": "2025-12-31",
+                "merchant": "EXAMPLE_MERCHANT_ONLY", 
+                "amount": 100.00,
+                "txn_type": "DEBIT",
+                "payment_method": "Unknown",
+                "transaction_id": "REF123456789",
+                "notes": "Retail Outlet Services" 
             }}
         ]
         """
@@ -69,31 +111,41 @@ class LLMExtractor:
         try:
             response = ollama.chat(
                 model=self.model,
-                messages=[{'role': 'user', 'content': prompt}],
-                format='json',
-                options={'temperature': 0}
+                messages=[{"role": "user", "content": prompt}],
+                format="json",
+                options={"temperature": 0},
             )
-            clean_json = self.clean_json_response(response['message']['content'])
+            clean_json = self.clean_json_response(response["message"]["content"])
             data = json.loads(clean_json)
 
-            # --- ROBUSTNESS FIX ---
-            # Even with the new prompt, we keep this safety check
-            # to handle cases where the model returns a single dict.
-
-            # Case 1: Wrapped in a "transactions" key (Common behavior)
-            if isinstance(data, dict) and 'transactions' in data:
-                return data['transactions']
-
-            # Case 2: Returned a single dict object
+            # --- POST-PROCESSING FILTERS ---
+            transactions = []
             if isinstance(data, dict):
-                return [data]
+                if "transactions" in data:
+                    transactions = data["transactions"]
+                else:
+                    transactions = [data]
+            elif isinstance(data, list):
+                transactions = data
 
-            # Case 3: Returned a list (Perfect)
-            if isinstance(data, list):
-                return data
+            valid_txns = []
+            for t in transactions:
+                # 1. Skip if it matches the example merchant
+                if "EXAMPLE_MERCHANT" in t.get("merchant", "").upper():
+                    continue
 
-            return []
+                # 2. Skip if no amount
+                if not t.get("amount"):
+                    continue
 
-        except Exception as e:
-            print(f"❌ LLM Error: {e}")
+                # 3. Date Sanitization
+                if not re.match(r"\d{4}-\d{2}-\d{2}", t.get("date", "")):
+                    continue
+
+                valid_txns.append(t)
+
+            return valid_txns
+
+        except Exception:
+            # print(f"❌ LLM Error: {e}")
             return []
