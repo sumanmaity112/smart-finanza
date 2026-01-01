@@ -9,7 +9,7 @@ provision:
 
 # Run the MCP server
 run:
-	. .env && uv run python src/main.py
+	@if [ -f .env ]; then set -a && . .env && set +a; fi; uv run python src/main.py
 
 # Run tests with coverage
 test:
