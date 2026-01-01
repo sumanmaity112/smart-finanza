@@ -13,3 +13,8 @@ class PaymentMethod(Enum):
     BANK_TRANSFER = "Bank Transfer"
     CASH = "Cash"
     UNKNOWN = "Unknown"
+
+
+class FileType(Enum):
+    PDF = "PDF"
+    CSV = "CSV"

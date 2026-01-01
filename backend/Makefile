@@ -1,9 +1,14 @@
-.PHONY: provision run test fix-lint check-lint
+.PHONY: provision sync run test fix-lint check-lint
 
 # Set up development environment
 provision:
 	@echo "Creating virtual environment..."
 	uv venv
+	@echo "Installing dependencies..."
+	uv sync
+
+# Install dependencies
+sync:
 	@echo "Installing dependencies..."
 	uv sync
 

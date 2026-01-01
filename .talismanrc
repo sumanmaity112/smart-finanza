@@ -8,5 +8,5 @@ fileignoreconfig:
 - filename: backend/src/tracker.py
   checksum: b33b4732f2b4f974ae3d697290cf2a9dbd96daeea1284e11a283321c9e224b88
 - filename: backend/uv.lock
-  checksum: c1c5d9cee826f4c19aac1dfcd184cac8485075383a6bf4929fbb9929a70a49bd
+  checksum: 814602c4e47cd8a7387ddedc9b903723b96a613080dfb1cf0d873b0e6d737ded
 version: "1.0"

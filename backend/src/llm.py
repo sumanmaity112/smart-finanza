@@ -1,8 +1,9 @@
 import os
-import ollama
+from ollama import Client
 import json
 import re
 from typing import List, Dict
+from constants import FileType
 
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5")
 CHUNK_SIZE_LINES = int(os.getenv("CHUNK_SIZE_LINES", "20"))
@@ -11,6 +12,9 @@ CHUNK_SIZE_LINES = int(os.getenv("CHUNK_SIZE_LINES", "20"))
 class LLMExtractor:
     def __init__(self, model=MODEL_NAME):
         self.model = model
+
+    def create_client(self):
+        return Client()
 
     def clean_json_response(self, response_text):
         """Removes Markdown formatting if the model adds it."""
@@ -40,7 +44,7 @@ class LLMExtractor:
         """
 
         try:
-            response = ollama.chat(
+            response = self.create_client().chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 options={"temperature": 0},
@@ -56,10 +60,12 @@ class LLMExtractor:
         except Exception:
             return "Unknown"
 
-    def extract_chunk(self, text_chunk: str, is_csv: bool = False) -> List[Dict]:
-        context_hint = (
-            "raw CSV rows" if is_csv else "unstructured text from a PDF bank statement"
-        )
+    def extract_chunk(self, text_chunk: str, file_type: FileType) -> List[Dict]:
+        # Determine context based on Enum
+        if file_type == FileType.CSV:
+            context_hint = "raw CSV rows"
+        else:
+            context_hint = "unstructured text from a PDF bank statement"
 
         prompt = f"""
         You are a strict financial data parser. Extract transactions from the {context_hint} below.
@@ -109,7 +115,7 @@ class LLMExtractor:
         """
 
         try:
-            response = ollama.chat(
+            response = self.create_client().chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 format="json",
