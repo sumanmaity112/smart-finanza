@@ -10,6 +10,8 @@ dependencies = [
     "pandas",
     "openpyxl",
     "tqdm",
+    "streamlit",
+    "plotly"
 ]
 
 [tool.setuptools.packages.find]

@@ -1,10 +1,12 @@
 import sqlite3
 import hashlib
 import os
+import pandas as pd
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Tuple, Optional
 from constants import TxnType, PaymentMethod
 
+# --- CONFIGURATION ---
 DB_NAME = os.getenv("DB_NAME", "finance_vault.db")
 
 
@@ -137,3 +139,22 @@ class DatabaseEngine:
         conn.commit()
         conn.close()
         return count
+
+    def run_query(self, query: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+        """Execute a SQL query and return results as DataFrame"""
+        conn = self.get_connection()
+        try:
+            df = pd.read_sql_query(query, conn)
+            conn.close()
+            return df, None
+        except Exception as e:
+            conn.close()
+            return None, str(e)
+
+    def get_all_transactions(self) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+        """Get all transactions from database"""
+        return self.run_query("SELECT * FROM transactions")
+
+    def get_category_rules(self) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+        """Get all category mapping rules"""
+        return self.run_query("SELECT * FROM category_map ORDER BY keyword")

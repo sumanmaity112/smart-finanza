@@ -12,9 +12,9 @@ sync:
 	@echo "Installing dependencies..."
 	uv sync
 
-# Run the MCP server
+# Run the dashboard
 run:
-	@if [ -f .env ]; then set -a && . .env && set +a; fi; uv run python src/main.py
+	@if [ -f .env ]; then set -a && . .env && set +a; fi; uv run streamlit run src/main.py
 
 # Run tests with coverage
 test:

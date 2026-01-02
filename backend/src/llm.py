@@ -155,3 +155,94 @@ class LLMExtractor:
         except Exception:
             # print(f"❌ LLM Error: {e}")
             return []
+
+    def text_to_sql(self, user_question: str, schema: str) -> str:
+        """Convert natural language question to SQL query"""
+        prompt = f"""
+        You are a SQLite expert. Convert the user's question into a valid SQL query.
+        
+        ### SCHEMA & CONTEXT
+        {schema}
+        
+        ### CRITICAL RULES
+        1. Return ONLY the raw SQL query. No markdown, no explanations.
+        2. ALWAYS use case-insensitive matching:
+           - For exact category match: WHERE LOWER(category) = LOWER('Health')
+           - For partial merchant match: WHERE LOWER(merchant) LIKE LOWER('%swiggy%')
+        3. Filter txn_type='DEBIT' for spending, 'CREDIT' for income.
+        4. Use strftime('%Y-%m', date) for monthly grouping.
+        5. Use the ACTUAL category/merchant names provided in the schema above.
+        
+        ### QUESTION
+        {user_question}
+        
+        ### SQL
+        """
+        try:
+            response = self.create_client().chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0},
+            )
+            sql = response["message"]["content"].strip()
+            if sql.startswith("```"):
+                sql = sql.replace("```sql", "").replace("```", "")
+            return sql.strip()
+        except Exception as e:
+            return f"-- Error: {str(e)}"
+
+    def analyze_question(self, user_question: str, schema: str) -> dict:
+        """
+        Analyze user question to determine if it needs database access or can be answered directly.
+        Returns dict with 'type' (either 'sql_query' or 'direct_answer') and corresponding content.
+        """
+        analysis_prompt = f"""
+        You are a financial analyst AI. Analyze the user's question and determine if it requires database access.
+        
+        ### USER QUESTION
+        {user_question}
+        
+        ### AVAILABLE DATABASE SCHEMA
+        {schema}
+        
+        ### INSTRUCTIONS
+        1. If the question requires accessing transaction data from the database, respond with: "SQL_QUERY_NEEDED"
+        2. If the question is about general financial advice, tips, calculations, or concepts that don't need the database, respond with: "DIRECT_ANSWER: <your answer>"
+        
+        Examples:
+        - "How much did I spend on Swiggy?" -> SQL_QUERY_NEEDED
+        - "What's my total spending last month?" -> SQL_QUERY_NEEDED
+        - "What is a good savings rate?" -> DIRECT_ANSWER: A good savings rate is typically 20-30% of your income...
+        - "Should I invest in mutual funds?" -> DIRECT_ANSWER: Mutual funds can be a good investment option...
+        - "How to budget better?" -> DIRECT_ANSWER: Here are some budgeting tips...
+        
+        ### YOUR RESPONSE
+        """
+
+        try:
+            analysis_response = self.create_client().chat(
+                model=self.model,
+                messages=[{'role': 'user', 'content': analysis_prompt}],
+                options={'temperature': 0}
+            )
+
+            analysis = analysis_response['message']['content'].strip()
+
+            # If it's a direct answer, return it
+            if analysis.startswith("DIRECT_ANSWER:"):
+                return {
+                    'type': 'direct_answer',
+                    'answer': analysis.replace("DIRECT_ANSWER:", "").strip()
+                }
+
+            # Otherwise, generate SQL query
+            sql = self.text_to_sql(user_question, schema)
+            return {
+                'type': 'sql_query',
+                'sql': sql
+            }
+        except Exception as e:
+            return {
+                'type': 'error',
+                'message': f"Failed to analyze question: {str(e)}"
+            }
