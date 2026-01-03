@@ -14,19 +14,48 @@ db_engine, llm_engine, tracker = get_backend()
 def main():
     st.title("💰 Finance Command Center")
 
+    # --- GLOBAL: Show persistent spinner if processing is ongoing ---
+    if st.session_state.get("processing_file", False):
+        st.info(
+            "⏳ Processing document... Please wait. Do not navigate away or interact until complete."
+        )
+
+    # --- Show Import Complete message if needed ---
+    if st.session_state.get("import_success", False):
+        st.toast("Import Complete!", icon="✅", duration="infinite")
+        st.session_state["import_success"] = False
+
     # --- GLOBAL SIDEBAR: DATA INGESTION ---
     with st.sidebar:
         st.header("📂 Data Import")
+        if "uploader_key" not in st.session_state:
+            st.session_state["uploader_key"] = 0
         uploaded_file = st.file_uploader(
             "Upload Statement",
             type=["pdf", "csv"],
             help="Upload bank/credit card statements here to update your database.",
+            accept_multiple_files=False,
+            label_visibility="visible",
+            disabled=st.session_state.get("processing_file", False),
+            key=f"uploader_{st.session_state['uploader_key']}",
         )
 
+        # Track processing state
+        if "processing_file" not in st.session_state:
+            st.session_state["processing_file"] = False
+
+        def start_processing():
+            st.session_state["processing_file"] = True
+
         if uploaded_file:
-            if st.button(f"Process {uploaded_file.name}", type="primary"):
+            process_disabled = st.session_state["processing_file"]
+            if st.button(
+                f"Process {uploaded_file.name}",
+                type="primary",
+                disabled=process_disabled,
+                on_click=start_processing,
+            ):
                 with st.spinner("Processing document..."):
-                    # Save temp file
                     temp_dir = "temp_ingest"
                     os.makedirs(temp_dir, exist_ok=True)
                     temp_path = os.path.join(temp_dir, uploaded_file.name)
@@ -35,12 +64,14 @@ def main():
                         f.write(uploaded_file.getbuffer())
 
                     try:
-                        # Run the tracker logic
                         tracker.process_file(temp_path)
-                        st.success("✅ Import Complete!")
+                        st.session_state["processing_file"] = False
+                        st.session_state["import_success"] = True
+                        st.session_state["uploader_key"] += 1
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
+                        st.session_state["processing_file"] = False
                     finally:
                         if os.path.exists(temp_path):
                             os.remove(temp_path)

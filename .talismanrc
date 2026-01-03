@@ -9,4 +9,10 @@ fileignoreconfig:
   checksum: b33b4732f2b4f974ae3d697290cf2a9dbd96daeea1284e11a283321c9e224b88
 - filename: backend/uv.lock
   checksum: 814602c4e47cd8a7387ddedc9b903723b96a613080dfb1cf0d873b0e6d737ded
+- filename: backend/src/dashboard/tab_rules.py
+  checksum: dadad6fd1c9ecd72203f26e463e522ffb2c2a026f5cc1501b84976b1a041ebc7
+- filename: backend/src/dashboard/tab_data_manager.py
+  checksum: 1f447af9b0152c0c838b289f920bd71d1ff5e4ec783de6d4f38365d7fa7ea9c9
+- filename: backend/src/dashboard/layout.py
+  checksum: 6fd9b38b8aad0af9cb7e2e90a6878ef84f8ccd5502346cace6647710ecf9d166
 version: "1.0"
