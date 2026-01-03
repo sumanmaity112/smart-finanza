@@ -156,35 +156,64 @@ class LLMExtractor:
             # print(f"❌ LLM Error: {e}")
             return []
 
+    def contextualize_question(self, messages: List[Dict]) -> str:
+        """
+        Rewrites the latest question based on chat history to make it standalone.
+        """
+        if not messages or len(messages) < 2:
+            # No history, just return the latest message
+            return messages[-1]["content"] if messages else ""
+
+        # Construct a simple history string
+        history_str = ""
+        for msg in messages[:-1]:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            history_str += f"{role}: {content}\n"
+
+        latest_question = messages[-1]["content"]
+
+        prompt = f"""
+        Given the chat history and the latest user question, rewrite the latest question to be a standalone question that captures all context.
+        
+        ### CHAT HISTORY
+        {history_str}
+        
+        ### LATEST QUESTION
+        {latest_question}
+        
+        ### INSTRUCTIONS
+        1. If the latest question depends on history (e.g. "what about last month?", "show me the graph"), rewrite it to include the missing context.
+        2. If it is already standalone (e.g. "hi", "spend on uber"), return it exactly as is.
+        3. Do NOT answer the question. Return ONLY the rewritten question string.
+        """
+
+        try:
+            response = self.create_client().chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0},
+            )
+            return response["message"]["content"].strip()
+        except Exception:
+            return latest_question
+
     def text_to_sql(self, user_question: str, schema: str) -> dict:
-        """
-        Convert natural language to SQL + Visualization Type.
-        Returns JSON: {"sql": "...", "visualization": "..."}
-        """
         prompt = f"""
         You are a SQLite expert and Data Analyst. 
         1. Generate a valid SQL query to answer the question.
         2. Determine the best visualization type for the result.
-
         ### SCHEMA
         {schema}
-
         ### VISUALIZATION TYPES
-        - "bar": Comparing categories (e.g. spending by category/merchant).
-        - "line": Trends over time (e.g. monthly spending).
-        - "pie": Parts of a whole (e.g. % split).
-        - "metric": Single number (e.g. total spent).
-        - "table": Detailed lists.
-
+        - "bar", "line", "pie", "metric", "table".
         ### CRITICAL SQL RULES
         1. Filter txn_type='DEBIT' for spending, 'CREDIT' for income.
         2. Use strftime('%Y-%m', date) for monthly grouping.
         3. ALWAYS use case-insensitive matching (LOWER(col) LIKE ...).
         4. DO NOT add filters unless explicitly asked.
-
         ### QUESTION
         {user_question}
-
         ### OUTPUT FORMAT (JSON ONLY)
         {{
             "sql": "SELECT ...",
@@ -205,61 +234,35 @@ class LLMExtractor:
     def analyze_question(self, user_question: str, schema: str) -> dict:
         """
         Analyze user question to determine intent.
-        Handles greetings/conversation as DIRECT_ANSWER to avoid bad SQL.
         """
         analysis_prompt = f"""
-        You are a financial analyst AI. Analyze the user's input to determine the next action.
-        
-        ### USER INPUT
-        "{user_question}"
-        
-        ### INSTRUCTIONS
-        Determine the intent and respond with exactly ONE of these options:
-        
-        Option 1: If the input is a greeting, conversation, or general knowledge question that DOES NOT require specific database data.
-        Response: "DIRECT_ANSWER: <A polite conversational reply or general answer>"
-        Examples: 
-        - "hi" -> "DIRECT_ANSWER: Hello! How can I help you with your finances today?"
-        - "hey there" -> "DIRECT_ANSWER: Hi! Ask me about your spending trends or budget."
-        - "what is inflation?" -> "DIRECT_ANSWER: Inflation is..."
-
-        Option 2: If the input requires querying the transaction database.
-        Response: "SQL_QUERY_NEEDED"
-        Examples:
-        - "how much did I spend on food?" -> "SQL_QUERY_NEEDED"
-        - "show my top merchants" -> "SQL_QUERY_NEEDED"
-
-        Your Response:
+        You are a financial analyst AI. Analyze the user's input.
+        Input: "{user_question}"
+        Instructions:
+        - If greeting/general (e.g. "hi", "thanks"), reply "DIRECT_ANSWER: <response>".
+        - If data question (e.g. "how much spent?", "trends"), reply "SQL_QUERY_NEEDED".
         """
-
         try:
-            # 1. Check Intent (Text Mode)
-            analysis_response = self.create_client().chat(
+            response = self.create_client().chat(
                 model=self.model,
                 messages=[{"role": "user", "content": analysis_prompt}],
                 options={"temperature": 0},
             )
-            analysis = analysis_response["message"]["content"].strip()
+            analysis = response["message"]["content"].strip()
 
-            # Case A: Direct Answer (Greetings, etc.)
             if "DIRECT_ANSWER" in analysis:
                 answer = analysis.replace("DIRECT_ANSWER:", "").strip()
-                # Fallback if model forgets to put a message after the tag
-                if not answer: answer = "Hello! How can I help with your financial data?"
                 return {
                     "type": "direct_answer",
-                    "answer": answer
+                    "answer": answer if answer else "Hello!",
                 }
 
-            # Case B: SQL Needed -> Call the JSON generator
-            # We assume anything else implies we need to try querying
+            # SQL Path
             result = self.text_to_sql(user_question, schema)
-
             return {
                 "type": "sql_query",
                 "sql": result.get("sql"),
-                "visualization": result.get("visualization", "table")
+                "visualization": result.get("visualization", "table"),
             }
-
         except Exception as e:
             return {"type": "error", "message": f"Analysis failed: {str(e)}"}
