@@ -195,7 +195,7 @@ class LLMExtractor:
             response = self.create_client().chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                format="json",  # Force JSON for this complex task
+                format="json",
                 options={"temperature": 0},
             )
             return json.loads(response["message"]["content"])
@@ -204,21 +204,32 @@ class LLMExtractor:
 
     def analyze_question(self, user_question: str, schema: str) -> dict:
         """
-        Analyze user question to determine if it needs database access.
-        Uses original string-probing logic for speed and stability.
+        Analyze user question to determine intent.
+        Handles greetings/conversation as DIRECT_ANSWER to avoid bad SQL.
         """
         analysis_prompt = f"""
-        You are a financial analyst AI. Analyze the user's question.
+        You are a financial analyst AI. Analyze the user's input to determine the next action.
         
-        ### USER QUESTION
-        {user_question}
-        
-        ### SCHEMA
-        {schema}
+        ### USER INPUT
+        "{user_question}"
         
         ### INSTRUCTIONS
-        1. If the question needs data from the DB, reply ONLY with: "SQL_QUERY_NEEDED"
-        2. If it is general advice (e.g. "How to save money?"), reply with: "DIRECT_ANSWER: <your answer>"
+        Determine the intent and respond with exactly ONE of these options:
+        
+        Option 1: If the input is a greeting, conversation, or general knowledge question that DOES NOT require specific database data.
+        Response: "DIRECT_ANSWER: <A polite conversational reply or general answer>"
+        Examples: 
+        - "hi" -> "DIRECT_ANSWER: Hello! How can I help you with your finances today?"
+        - "hey there" -> "DIRECT_ANSWER: Hi! Ask me about your spending trends or budget."
+        - "what is inflation?" -> "DIRECT_ANSWER: Inflation is..."
+
+        Option 2: If the input requires querying the transaction database.
+        Response: "SQL_QUERY_NEEDED"
+        Examples:
+        - "how much did I spend on food?" -> "SQL_QUERY_NEEDED"
+        - "show my top merchants" -> "SQL_QUERY_NEEDED"
+
+        Your Response:
         """
 
         try:
@@ -230,11 +241,15 @@ class LLMExtractor:
             )
             analysis = analysis_response["message"]["content"].strip()
 
-            # Case A: Direct Answer
+            # Case A: Direct Answer (Greetings, etc.)
             if "DIRECT_ANSWER" in analysis:
-                # Clean up the tag if present
                 answer = analysis.replace("DIRECT_ANSWER:", "").strip()
-                return {"type": "direct_answer", "answer": answer}
+                # Fallback if model forgets to put a message after the tag
+                if not answer: answer = "Hello! How can I help with your financial data?"
+                return {
+                    "type": "direct_answer",
+                    "answer": answer
+                }
 
             # Case B: SQL Needed -> Call the JSON generator
             # We assume anything else implies we need to try querying
@@ -243,7 +258,7 @@ class LLMExtractor:
             return {
                 "type": "sql_query",
                 "sql": result.get("sql"),
-                "visualization": result.get("visualization", "table"),
+                "visualization": result.get("visualization", "table")
             }
 
         except Exception as e:
