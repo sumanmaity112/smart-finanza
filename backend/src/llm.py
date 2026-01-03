@@ -156,93 +156,95 @@ class LLMExtractor:
             # print(f"❌ LLM Error: {e}")
             return []
 
-    def text_to_sql(self, user_question: str, schema: str) -> str:
-        """Convert natural language question to SQL query"""
+    def text_to_sql(self, user_question: str, schema: str) -> dict:
+        """
+        Convert natural language to SQL + Visualization Type.
+        Returns JSON: {"sql": "...", "visualization": "..."}
+        """
         prompt = f"""
-        You are a SQLite expert. Convert the user's question into a valid SQL query.
-        
-        ### SCHEMA & CONTEXT
+        You are a SQLite expert and Data Analyst. 
+        1. Generate a valid SQL query to answer the question.
+        2. Determine the best visualization type for the result.
+
+        ### SCHEMA
         {schema}
-        
-        ### CRITICAL RULES
-        1. Return ONLY the raw SQL query. No markdown, no explanations.
-        2. ALWAYS use case-insensitive matching:
-           - For exact category match: WHERE LOWER(category) = LOWER('Health')
-           - For partial merchant match: WHERE LOWER(merchant) LIKE LOWER('%swiggy%')
-        3. Filter txn_type='DEBIT' for spending, 'CREDIT' for income.
-        4. Use strftime('%Y-%m', date) for monthly grouping.
-        5. Use the ACTUAL category/merchant names provided in the schema above.
-        
+
+        ### VISUALIZATION TYPES
+        - "bar": Comparing categories (e.g. spending by category/merchant).
+        - "line": Trends over time (e.g. monthly spending).
+        - "pie": Parts of a whole (e.g. % split).
+        - "metric": Single number (e.g. total spent).
+        - "table": Detailed lists.
+
+        ### CRITICAL SQL RULES
+        1. Filter txn_type='DEBIT' for spending, 'CREDIT' for income.
+        2. Use strftime('%Y-%m', date) for monthly grouping.
+        3. ALWAYS use case-insensitive matching (LOWER(col) LIKE ...).
+        4. DO NOT add filters unless explicitly asked.
+
         ### QUESTION
         {user_question}
-        
-        ### SQL
+
+        ### OUTPUT FORMAT (JSON ONLY)
+        {{
+            "sql": "SELECT ...",
+            "visualization": "bar"
+        }}
         """
         try:
             response = self.create_client().chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
+                format="json",  # Force JSON for this complex task
                 options={"temperature": 0},
             )
-            sql = response["message"]["content"].strip()
-            if sql.startswith("```"):
-                sql = sql.replace("```sql", "").replace("```", "")
-            return sql.strip()
+            return json.loads(response["message"]["content"])
         except Exception as e:
-            return f"-- Error: {str(e)}"
+            return {"sql": f"-- Error: {str(e)}", "visualization": "table"}
 
     def analyze_question(self, user_question: str, schema: str) -> dict:
         """
-        Analyze user question to determine if it needs database access or can be answered directly.
-        Returns dict with 'type' (either 'sql_query' or 'direct_answer') and corresponding content.
+        Analyze user question to determine if it needs database access.
+        Uses original string-probing logic for speed and stability.
         """
         analysis_prompt = f"""
-        You are a financial analyst AI. Analyze the user's question and determine if it requires database access.
+        You are a financial analyst AI. Analyze the user's question.
         
         ### USER QUESTION
         {user_question}
         
-        ### AVAILABLE DATABASE SCHEMA
+        ### SCHEMA
         {schema}
         
         ### INSTRUCTIONS
-        1. If the question requires accessing transaction data from the database, respond with: "SQL_QUERY_NEEDED"
-        2. If the question is about general financial advice, tips, calculations, or concepts that don't need the database, respond with: "DIRECT_ANSWER: <your answer>"
-        
-        Examples:
-        - "How much did I spend on Swiggy?" -> SQL_QUERY_NEEDED
-        - "What's my total spending last month?" -> SQL_QUERY_NEEDED
-        - "What is a good savings rate?" -> DIRECT_ANSWER: A good savings rate is typically 20-30% of your income...
-        - "Should I invest in mutual funds?" -> DIRECT_ANSWER: Mutual funds can be a good investment option...
-        - "How to budget better?" -> DIRECT_ANSWER: Here are some budgeting tips...
-        
-        ### YOUR RESPONSE
+        1. If the question needs data from the DB, reply ONLY with: "SQL_QUERY_NEEDED"
+        2. If it is general advice (e.g. "How to save money?"), reply with: "DIRECT_ANSWER: <your answer>"
         """
 
         try:
+            # 1. Check Intent (Text Mode)
             analysis_response = self.create_client().chat(
                 model=self.model,
-                messages=[{'role': 'user', 'content': analysis_prompt}],
-                options={'temperature': 0}
+                messages=[{"role": "user", "content": analysis_prompt}],
+                options={"temperature": 0},
             )
+            analysis = analysis_response["message"]["content"].strip()
 
-            analysis = analysis_response['message']['content'].strip()
+            # Case A: Direct Answer
+            if "DIRECT_ANSWER" in analysis:
+                # Clean up the tag if present
+                answer = analysis.replace("DIRECT_ANSWER:", "").strip()
+                return {"type": "direct_answer", "answer": answer}
 
-            # If it's a direct answer, return it
-            if analysis.startswith("DIRECT_ANSWER:"):
-                return {
-                    'type': 'direct_answer',
-                    'answer': analysis.replace("DIRECT_ANSWER:", "").strip()
-                }
+            # Case B: SQL Needed -> Call the JSON generator
+            # We assume anything else implies we need to try querying
+            result = self.text_to_sql(user_question, schema)
 
-            # Otherwise, generate SQL query
-            sql = self.text_to_sql(user_question, schema)
             return {
-                'type': 'sql_query',
-                'sql': sql
+                "type": "sql_query",
+                "sql": result.get("sql"),
+                "visualization": result.get("visualization", "table"),
             }
+
         except Exception as e:
-            return {
-                'type': 'error',
-                'message': f"Failed to analyze question: {str(e)}"
-            }
+            return {"type": "error", "message": f"Analysis failed: {str(e)}"}

@@ -3,5 +3,4 @@
 
 from .layout import main
 
-__all__ = ['main']
-
+__all__ = ["main"]
