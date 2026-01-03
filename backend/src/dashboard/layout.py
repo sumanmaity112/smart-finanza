@@ -10,13 +10,18 @@ from .tab_rules import render_rules_tab
 
 db_engine, llm_engine, tracker = get_backend()
 
+
 def main():
     st.title("💰 Finance Command Center")
 
     # --- GLOBAL SIDEBAR: DATA INGESTION ---
     with st.sidebar:
         st.header("📂 Data Import")
-        uploaded_file = st.file_uploader("Upload Statement", type=["pdf", "csv"], help="Upload bank statements here to update your database.")
+        uploaded_file = st.file_uploader(
+            "Upload Statement",
+            type=["pdf", "csv"],
+            help="Upload bank/credit card statements here to update your database.",
+        )
 
         if uploaded_file:
             if st.button(f"Process {uploaded_file.name}", type="primary"):

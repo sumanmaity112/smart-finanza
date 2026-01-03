@@ -1,5 +1,6 @@
 import streamlit as st
 
+
 def render_transactions_viewer_tab(df, tracker):
     st.markdown("Manually review transactions details.")
     st.caption("To make permanent changes, use the 'Rules' tab.")
@@ -9,7 +10,9 @@ def render_transactions_viewer_tab(df, tracker):
         return
 
     # Dynamically get all unique categories from the data
-    category_options = sorted([c for c in df["category"].dropna().unique() if str(c).strip() != ""])
+    category_options = sorted(
+        [c for c in df["category"].dropna().unique() if str(c).strip() != ""]
+    )
     if not category_options:
         category_options = ["Uncategorized"]
 
@@ -26,5 +29,5 @@ def render_transactions_viewer_tab(df, tracker):
         width="stretch",
         key="viewer",
         height=600,
-        disabled=True  # Make the table read-only
+        disabled=True,  # Make the table read-only
     )
